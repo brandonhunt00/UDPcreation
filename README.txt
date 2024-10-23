@@ -1,4 +1,4 @@
-*** Projeto de Comunicação com Protocolo UDP Simulado via Sockets RAW
+***Projeto de Comunicação com Protocolo UDP Simulado via Sockets RAW
 
 Este projeto implementa um protocolo "UDP" personalizado utilizando sockets RAW no C, permitindo comunicação entre um cliente e um servidor. O projeto inclui o cálculo e a verificação de checksums para garantir a integridade dos pacotes, além da verificação do tamanho do pacote.
 Estrutura do Projeto
