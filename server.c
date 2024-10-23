@@ -1,119 +1,87 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <netinet/ip.h>
 
-// Definição de cabeçalho IP simplificado
-struct ip_header {
-    uint8_t  version_ihl;    // Versão e comprimento do cabeçalho IP
-    uint8_t  tos;            // Tipo de serviço
-    uint16_t total_length;    // Comprimento total (IP + UDP + Dados)
-    uint16_t id;             // Identificação do pacote
-    uint16_t flags_offset;   // Flags e fragmentação
-    uint8_t  ttl;            // Time to Live (TTL)
-    uint8_t  protocol;       // Protocolo (UDP = 17)
-    uint16_t checksum;       // Checksum do cabeçalho IP
-    uint32_t source_ip;      // Endereço IP de origem
-    uint32_t dest_ip;        // Endereço IP de destino
+#define TAMANHO_BUFFER 1024
+#define PORTA_DESTINO 8080
+
+// Estrutura do nosso "UDP" simulado (semelhante ao UDP)
+struct udp_simulado {
+    uint16_t porta_origem;
+    uint16_t porta_destino;
+    uint16_t comprimento;
+    uint16_t checksum;
+    char dados[TAMANHO_BUFFER];
 };
 
-// Definição de cabeçalho UDP simplificado
-struct udp_header {
-    uint16_t source_port;   // Porta de origem
-    uint16_t dest_port;     // Porta de destino
-    uint16_t length;        // Comprimento total do UDP (cabeçalho + dados)
-    uint16_t checksum;      // Checksum do cabeçalho UDP e dados
-};
-
-// Estrutura de pacote completo (IP + UDP + Dados)
-struct udp_packet {
-    struct ip_header ip_hdr;    // Cabeçalho IP
-    struct udp_header udp_hdr;  // Cabeçalho UDP
-    char data[1024];            // Dados (payload)
-};
-
-// Função para calcular checksum simplificado
-uint16_t calculate_checksum(uint16_t *buffer, int size) {
-    uint32_t sum = 0;
-    while (size > 1) {
-        sum += *buffer++;
-        size -= 2;
-    }
-    if (size == 1) {
-        sum += *(uint8_t *)buffer;
-    }
+// Função para calcular o checksum IP
+unsigned short checksum(void *b, int len) {
+    unsigned short *buf = b;
+    unsigned int sum = 0;
+    for (sum = 0; len > 1; len -= 2)
+        sum += *buf++;
+    if (len == 1)
+        sum += *(unsigned char *)buf;
     sum = (sum >> 16) + (sum & 0xFFFF);
     sum += (sum >> 16);
-    return (uint16_t)(~sum);
+    return (unsigned short)(~sum);
 }
 
-// Função para criar e enviar pacotes UDP (simulação)
-void send_udp_packet(struct udp_packet *packet, const char *dest_ip, const char *data, size_t data_len) {
-    // Configurar o cabeçalho IP
-    packet->ip_hdr.version_ihl = (4 << 4) | (sizeof(struct ip_header) / 4);
-    packet->ip_hdr.tos = 0;
-    packet->ip_hdr.total_length = htons(sizeof(struct ip_header) + sizeof(struct udp_header) + data_len);
-    packet->ip_hdr.id = htons(54321);
-    packet->ip_hdr.flags_offset = 0;
-    packet->ip_hdr.ttl = 64;
-    packet->ip_hdr.protocol = 17;  // Protocolo UDP (17)
-    packet->ip_hdr.source_ip = inet_addr("192.168.1.10");  // IP fictício de origem
-    packet->ip_hdr.dest_ip = inet_addr(dest_ip);  // IP de destino fornecido
-    packet->ip_hdr.checksum = 0;
-    packet->ip_hdr.checksum = calculate_checksum((uint16_t *)&packet->ip_hdr, sizeof(struct ip_header));
+int main() {
+    struct sockaddr_in destino;
+    int sock;
+    char pacote[4096];  // Buffer para o pacote completo (cabeçalho IP + dados)
+    struct iphdr *ip_header = (struct iphdr *)pacote;  // Cabeçalho IP
+    struct udp_simulado *udp_payload = (struct udp_simulado *)(pacote + sizeof(struct iphdr));  // Dados do UDP simulado
+    socklen_t tamanho_destino;
 
-    // Configurar o cabeçalho UDP
-    packet->udp_hdr.source_port = htons(12345);   // Porta de origem fictícia
-    packet->udp_hdr.dest_port = htons(80);        // Porta de destino fictícia
-    packet->udp_hdr.length = htons(sizeof(struct udp_header) + data_len);
-    packet->udp_hdr.checksum = 0;  // Checksum é opcional no UDP
+    // Cria um socket RAW
+    sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+    if (sock < 0) {
+        perror("Erro ao criar socket");
+        return 1;
+    }
 
-    // Copiar os dados para o pacote
-    memcpy(packet->data, data, data_len);
+    // Preenche o cabeçalho do nosso "UDP" simulado
+    udp_payload->porta_origem = htons(12345);  // Porta de origem fictícia
+    udp_payload->porta_destino = htons(PORTA_DESTINO);  // Porta de destino
+    udp_payload->comprimento = htons(sizeof(struct udp_simulado));  // Comprimento do UDP simulado
+    udp_payload->checksum = 0;  // Sem checksum para o UDP simulado
+    strcpy(udp_payload->dados, "Olá, este é um pacote UDP simulado!");  // Dados
 
-    // Simular o envio do pacote para a rede
-    printf("Pacote UDP enviado para %s\n", dest_ip);
-    printf("Dados enviados: %s\n", data);
-}
+    // Preenche o cabeçalho IP
+    ip_header->ihl = 5;  // Tamanho do cabeçalho IP (5 palavras de 32 bits)
+    ip_header->version = 4;  // IPv4
+    ip_header->tos = 0;  // Tipo de serviço
+    ip_header->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udp_simulado));  // Comprimento total do pacote (IP + dados)
+    ip_header->id = htonl(54321);  // Identificação do pacote
+    ip_header->frag_off = 0;  // Sem fragmentação
+    ip_header->ttl = 64;  // Time to live
+    ip_header->protocol = IPPROTO_RAW;  // Protocolo RAW (simulando UDP)
+    ip_header->check = 0;  // Checksum (preenchido depois)
+    ip_header->saddr = inet_addr("127.0.0.1");  // Endereço de origem
+    ip_header->daddr = inet_addr("127.0.0.1");  // Endereço de destino
 
-// Função para simular recepção de pacotes UDP
-void receive_udp_packet(struct udp_packet *packet) {
-    // Simular recepção de um pacote
-    printf("Pacote UDP recebido:\n");
-    printf("De: %s\n", inet_ntoa(*(struct in_addr *)&packet->ip_hdr.source_ip));
-    printf("Para: %s\n", inet_ntoa(*(struct in_addr *)&packet->ip_hdr.dest_ip));
-    printf("Dados: %s\n", packet->data);
-}
+    // Calcula o checksum do cabeçalho IP
+    ip_header->check = checksum((unsigned short *)pacote, ip_header->tot_len);
 
-// Thread para simular recebimento de pacotes
-void* receivePackets(void *vargp) {
-    // Criar um pacote UDP fictício para simulação
-    struct udp_packet received_packet;
-    strcpy(received_packet.data, "Simulação de pacote recebido");
-    
-    // Receber pacotes (simulação)
-    receive_udp_packet(&received_packet);
-    pthread_exit(NULL);
-}
+    // Preenche a estrutura de destino
+    destino.sin_family = AF_INET;
+    destino.sin_port = htons(PORTA_DESTINO);
+    destino.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-// Função principal simulando o servidor UDP
-int main(void) {
-    pthread_t thread_id;
+    // Envia o pacote via socket RAW
+    if (sendto(sock, pacote, ntohs(ip_header->tot_len), 0, (struct sockaddr *)&destino, sizeof(destino)) < 0) {
+        perror("Erro ao enviar pacote");
+        return 1;
+    }
 
-    // Enviar pacotes UDP (simulação)
-    struct udp_packet packet;
-    const char *data = "Teste de dados UDP manual";
-    send_udp_packet(&packet, "192.168.1.20", data, strlen(data));
+    printf("Pacote enviado com sucesso!\n");
 
-    // Criar uma thread para simular a recepção de pacotes
-    pthread_create(&thread_id, NULL, receivePackets, NULL);
-
-    // Esperar o término da thread
-    pthread_join(thread_id, NULL);
-
-    printf("Servidor UDP: Processamento de pacotes finalizado.\n");
+    close(sock);
     return 0;
 }
