@@ -6,10 +6,10 @@
 #include <unistd.h>
 #include <netinet/ip.h>
 
-#define TAMANHO_BUFFER 1024
-#define PORTA_DESTINO 8080
+#define TAMANHO_BUFFER 4096
+#define PORTA_SERVIDOR 8080
 
-// Estrutura do nosso "UDP" simulado (semelhante ao UDP)
+// Estrutura do nosso "UDP" simulado
 struct udp_simulado {
     uint16_t porta_origem;
     uint16_t porta_destino;
@@ -18,7 +18,7 @@ struct udp_simulado {
     char dados[TAMANHO_BUFFER];
 };
 
-// Função para calcular o checksum IP
+// Função para calcular o checksum
 unsigned short checksum(void *b, int len) {
     unsigned short *buf = b;
     unsigned int sum = 0;
@@ -32,12 +32,13 @@ unsigned short checksum(void *b, int len) {
 }
 
 int main() {
-    struct sockaddr_in destino;
+    struct sockaddr_in cliente;
     int sock;
-    char pacote[4096];  // Buffer para o pacote completo (cabeçalho IP + dados)
-    struct iphdr *ip_header = (struct iphdr *)pacote;  // Cabeçalho IP
-    struct udp_simulado *udp_payload = (struct udp_simulado *)(pacote + sizeof(struct iphdr));  // Dados do UDP simulado
-    socklen_t tamanho_destino;
+    char buffer[TAMANHO_BUFFER];
+    struct iphdr *ip_header;
+    struct udp_simulado *udp_payload;
+    socklen_t tamanho_cliente;
+    int bytes_recebidos;
 
     // Cria um socket RAW
     sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
@@ -46,41 +47,46 @@ int main() {
         return 1;
     }
 
-    // Preenche o cabeçalho do nosso "UDP" simulado
-    udp_payload->porta_origem = htons(12345);  // Porta de origem fictícia
-    udp_payload->porta_destino = htons(PORTA_DESTINO);  // Porta de destino
-    udp_payload->comprimento = htons(sizeof(struct udp_simulado));  // Comprimento do UDP simulado
-    udp_payload->checksum = 0;  // Sem checksum para o UDP simulado
-    strcpy(udp_payload->dados, "Olá, este é um pacote UDP simulado!");  // Dados
+    printf("Servidor esperando pacotes...\n");
 
-    // Preenche o cabeçalho IP
-    ip_header->ihl = 5;  // Tamanho do cabeçalho IP (5 palavras de 32 bits)
-    ip_header->version = 4;  // IPv4
-    ip_header->tos = 0;  // Tipo de serviço
-    ip_header->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udp_simulado));  // Comprimento total do pacote (IP + dados)
-    ip_header->id = htonl(54321);  // Identificação do pacote
-    ip_header->frag_off = 0;  // Sem fragmentação
-    ip_header->ttl = 64;  // Time to live
-    ip_header->protocol = IPPROTO_RAW;  // Protocolo RAW (simulando UDP)
-    ip_header->check = 0;  // Checksum (preenchido depois)
-    ip_header->saddr = inet_addr("127.0.0.1");  // Endereço de origem
-    ip_header->daddr = inet_addr("127.0.0.1");  // Endereço de destino
+    // Loop de recebimento
+    while (1) {
+        memset(buffer, 0, TAMANHO_BUFFER);  // Limpa o buffer
+        tamanho_cliente = sizeof(cliente);
 
-    // Calcula o checksum do cabeçalho IP
-    ip_header->check = checksum((unsigned short *)pacote, ip_header->tot_len);
+        // Recebe o pacote RAW
+        bytes_recebidos = recvfrom(sock, buffer, TAMANHO_BUFFER, 0, (struct sockaddr *)&cliente, &tamanho_cliente);
+        if (bytes_recebidos < 0) {
+            perror("Erro ao receber pacote");
+            return 1;
+        }
 
-    // Preenche a estrutura de destino
-    destino.sin_family = AF_INET;
-    destino.sin_port = htons(PORTA_DESTINO);
-    destino.sin_addr.s_addr = inet_addr("127.0.0.1");
+        // Analisa o cabeçalho IP
+        ip_header = (struct iphdr *)buffer;
+        udp_payload = (struct udp_simulado *)(buffer + ip_header->ihl * 4);  // Pula o cabeçalho IP
 
-    // Envia o pacote via socket RAW
-    if (sendto(sock, pacote, ntohs(ip_header->tot_len), 0, (struct sockaddr *)&destino, sizeof(destino)) < 0) {
-        perror("Erro ao enviar pacote");
-        return 1;
+        // Verifica o tamanho do pacote
+        int tamanho_total = ntohs(ip_header->tot_len);
+        if (tamanho_total != (sizeof(struct iphdr) + sizeof(struct udp_simulado))) {
+            printf("Erro: Tamanho do pacote incorreto!\n");
+            continue;
+        }
+
+        // Verifica o checksum
+        uint16_t checksum_recebido = udp_payload->checksum;
+        udp_payload->checksum = 0;  // Zera o checksum antes de recalcular
+        uint16_t checksum_calculado = checksum(udp_payload, sizeof(struct udp_simulado) - TAMANHO_BUFFER + strlen(udp_payload->dados));
+
+        if (checksum_recebido != checksum_calculado) {
+            printf("Erro: Checksum incorreto!\n");
+            continue;
+        }
+
+        printf("Pacote recebido!\n");
+        printf("Origem: %d\n", ntohs(udp_payload->porta_origem));
+        printf("Destino: %d\n", ntohs(udp_payload->porta_destino));
+        printf("Dados: %s\n", udp_payload->dados);
     }
-
-    printf("Pacote enviado com sucesso!\n");
 
     close(sock);
     return 0;
