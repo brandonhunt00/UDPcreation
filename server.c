@@ -67,21 +67,24 @@ int main() {
 
         // Verifica o tamanho do pacote
         int tamanho_total = ntohs(ip_header->tot_len);
-        if (tamanho_total != (sizeof(struct iphdr) + sizeof(struct udp_simulado))) {
-            printf("Erro: Tamanho do pacote incorreto!\n");
-            continue;
+        int udp_len = sizeof(struct udp_simulado) - TAMANHO_BUFFER + strlen(udp_payload->dados);
+        printf("Tamanho total do pacote recebido: %d bytes\n", tamanho_total);
+        printf("Tamanho esperado: %ld bytes\n", sizeof(struct iphdr) + udp_len);
+
+        if (tamanho_total != (sizeof(struct iphdr) + udp_len)) {
+            printf("Aviso: Tamanho do pacote incorreto! Continuando a processar o pacote...\n");
         }
 
         // Verifica o checksum
         uint16_t checksum_recebido = udp_payload->checksum;
         udp_payload->checksum = 0;  // Zera o checksum antes de recalcular
-        uint16_t checksum_calculado = checksum(udp_payload, sizeof(struct udp_simulado) - TAMANHO_BUFFER + strlen(udp_payload->dados));
+        uint16_t checksum_calculado = checksum(udp_payload, udp_len);
 
         if (checksum_recebido != checksum_calculado) {
-            printf("Erro: Checksum incorreto!\n");
-            continue;
+            printf("Erro: Checksum incorreto! Continuando a processar o pacote...\n");
         }
 
+        // Exibe a mensagem recebida, mesmo com erros
         printf("Pacote recebido!\n");
         printf("Origem: %d\n", ntohs(udp_payload->porta_origem));
         printf("Destino: %d\n", ntohs(udp_payload->porta_destino));
