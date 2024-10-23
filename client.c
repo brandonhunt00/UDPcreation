@@ -46,7 +46,14 @@ int main() {
         return 1;
     }
 
-    // Preenche o cabeçalho do nosso "UDP" personalizado
+    // Habilita a inclusão do cabeçalho IP manualmente
+    int optval = 1;
+    if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &optval, sizeof(optval)) < 0) {
+        perror("Erro ao configurar IP_HDRINCL");
+        return 1;
+    }
+
+    // Preenche o cabeçalho do nosso "UDP" simulado
     udp_payload->porta_origem = htons(12345);  // Porta de origem fictícia
     udp_payload->porta_destino = htons(PORTA_DESTINO);  // Porta de destino
     udp_payload->comprimento = htons(sizeof(struct udp_simulado));  // Comprimento do pacote
@@ -62,7 +69,8 @@ int main() {
     ip_header->ihl = 5;  // Tamanho do cabeçalho IP (5 palavras de 32 bits)
     ip_header->version = 4;  // IPv4
     ip_header->tos = 0;  // Tipo de serviço
-    ip_header->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udp_simulado));  // Comprimento total do pacote
+    int udp_len = sizeof(struct udp_simulado) - TAMANHO_BUFFER + strlen(udp_payload->dados);
+    ip_header->tot_len = htons(sizeof(struct iphdr) + udp_len);  // Comprimento total do pacote
     ip_header->id = htonl(54321);  // Identificação do pacote
     ip_header->frag_off = 0;  // Sem fragmentação
     ip_header->ttl = 64;  // Time to live
@@ -73,6 +81,8 @@ int main() {
 
     // Calcula o checksum do cabeçalho IP
     ip_header->check = checksum((unsigned short *)pacote, sizeof(struct iphdr));
+
+    printf("Tamanho total do pacote enviado: %d bytes\n", ntohs(ip_header->tot_len));
 
     // Preenche a estrutura de destino
     destino.sin_family = AF_INET;
